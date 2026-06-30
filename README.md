@@ -1,4 +1,4 @@
-```
+```yaml
 source: clear
 features:
   - php latest

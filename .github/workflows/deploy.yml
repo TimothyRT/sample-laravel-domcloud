@@ -1,0 +1,106 @@
+name: Build & Deploy Backend to DOM Cloud
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - master
+      - workos
+  pull_request:
+    branches:
+      - develop
+      - main
+      - master
+      - workos
+  workflow_dispatch:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php-version: ['8.5']
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+      with:
+        php-version: ${{ matrix.php-version }}
+        tools: composer:v2
+        coverage: xdebug
+    
+    - name: Setup Node
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version: '22'
+
+    - name: Install Dependencies
+      run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+    - name: Copy Environment File
+      run: cp .env.example .env
+    
+    - name: Migrate database
+      run: php artisan migrate:fresh
+
+    - name: Generate Application Key
+      run: php artisan key:generate
+
+    - name: Build Assets
+      run: |
+        npm install
+        npm run build
+
+    - name: Run Type Analysis
+      run: composer types:check
+
+    - name: Test SSH
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          whoami
+          pwd
+          echo $HOME
+          mkdir -p public_html/test
+          echo OK
+    
+    - name: Clear previous files
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          cd ~
+          rm -r public_html
+          mkdir public_html
+    
+    - name: Deploy application
+      uses: appleboy/scp-action@v1
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        port: 22
+        source: "."
+        target: "public_html"
+    
+    - name: Clean up and restart application
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ secrets.SSH_HOST }}
+        username: ${{ secrets.SSH_USER }}
+        key: ${{ secrets.SSH_KEY }}
+        script: |
+          php artisan route:clear
+          php artisan config:clear
+          php artisan view:clear
+          rm -f public/hot
+          restart || true
